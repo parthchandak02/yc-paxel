@@ -1,0 +1,7 @@
+# False positives for generic env-var documentation and .gitignore entries
+\.env
+HERMES_FALLBACK_PATH
+PAXEL_PATH_MAPPINGS
+PAXEL_STAGE_DIR
+\.venv/
+venv/

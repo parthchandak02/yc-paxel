@@ -1,0 +1,7 @@
+{
+  "_comment": "Copy to ~/.config/yc-paxel/path-mappings.json or set PAXEL_PATH_MAPPINGS to this file.",
+  "cursor_project_folder_to_path": {
+    "Users-yourname-projects-myapp": "~/projects/myapp",
+    "Users-yourname-myapp-scripts": "~/myapp/scripts"
+  }
+}
