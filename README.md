@@ -1,149 +1,141 @@
-# yc-paxel
+<div align="center">
 
-Stage agent transcripts from **Cursor**, **Hermes**, and **Perplexity** into [YC Paxel](https://paxel.ycombinator.com)'s accepted format, then upload for coding-agent analysis reports.
+<h1>yc-paxel</h1>
 
-Paxel does not natively read modern Cursor `agent-transcripts`, Hermes `state.db`, or Perplexity web threads. This repo provides small exporters and a single upload wrapper.
+<p><b>Cursor, Hermes and Perplexity sessions, ready for Paxel.</b></p>
 
-## What gets uploaded
+<p><i>YC Paxel reports on how you work with coding agents, but it only reads Claude Code's transcript layout. This converts the other agents' sessions into it.</i></p>
 
-Only **your local transcript data** when you run the scripts. This repository contains **no personal sessions, tokens, or path mappings** — only generic tooling.
+<h6>
 
-## Prerequisites
+![Python](https://img.shields.io/badge/Python-3.10%2B-111111?style=flat-square&logo=python&logoColor=white)
+![Deps](https://img.shields.io/badge/dependencies-stdlib%20only-F26522?style=flat-square)
+![Target](https://img.shields.io/badge/for-YC%20Paxel-F26522?style=flat-square&logo=ycombinator&logoColor=white)
+![Agents](https://img.shields.io/badge/agents-Cursor%20%C2%B7%20Hermes%20%C2%B7%20Perplexity-111111?style=flat-square)
+![License](https://img.shields.io/badge/license-MIT-555555?style=flat-square)
 
-- Python 3.10+
-- Docker (or [Colima](https://github.com/abiosoft/colima) on macOS)
-- Paxel auth token at `~/.paxel/token` (created on first upload)
+</h6>
 
-Optional:
+<a href="#install"><b>Install</b></a> ·
+<a href="#usage"><b>Usage</b></a> ·
+<a href="#how-it-works"><b>How it works</b></a>
 
-- **Hermes**: `~/.hermes/state.db`
-- **Perplexity live export**: `perplexity-pro` CLI in `PATH`
-- **Perplexity offline export**: JSON/Markdown files from Perplexity data export or browser extensions
+<br><br>
 
-## Quick start
+<img src="docs/assets/readme/staging.png" width="720" alt="Terminal: Hermes export writes 3 sessions and skips 1 as too short, Perplexity export writes 4 threads, Cursor staging groups 5 sessions under two demo repos with their git remotes, and the format fixer updates 5 files">
+
+<sub>Real output of the staging steps, run against made-up sample transcripts in a throwaway home folder (shown as <code>~</code>). Nothing uploaded.</sub>
+
+</div>
+
+<br>
+
+## Why
+
+[YC Paxel](https://paxel.ycombinator.com) expects one folder per project, a
+`sessions-index.json` in each, and JSONL lines with a top-level `"type"`. Cursor keeps its
+agent transcripts per workspace with `"role"` instead, Hermes keeps sessions in a SQLite
+database, and Perplexity threads live on the web or in an export. These scripts put all
+three into Paxel's layout, grouped by git repo, and then run Paxel's own uploader.
+
+## Install
+
+Needs Python 3.10+ (standard library only) and Docker or [Colima](https://github.com/abiosoft/colima)
+for the Paxel uploader. Paxel creates its token at `~/.paxel/token` on the first upload.
 
 ```bash
 git clone https://github.com/parthchandak02/yc-paxel.git
 cd yc-paxel
-
-# Cursor sessions only
-bash scripts/paxel-upload.sh --cursor --all
-
-# Hermes gateway sessions (WhatsApp, cron, CLI, subagents, etc.)
-bash scripts/paxel-upload.sh --hermes-db --all
-
-# Perplexity (requires perplexity-pro CLI)
-bash scripts/paxel-upload.sh --perplexity-pro --all
-
-# All three agents into one report
-bash scripts/paxel-upload.sh --all-agents --all
 ```
 
-Report URL appears in the upload log (`results/<id>/v3`).
+To use it as a Cursor skill, link it in: `ln -s "$(pwd)" ~/.cursor/skills/yc-paxel`.
 
-## Supported agents
-
-| Agent | Source | Script / flag |
-|-------|--------|---------------|
-| Cursor | `~/.cursor/projects/*/agent-transcripts/*.jsonl` | `--cursor` |
-| Hermes | `~/.hermes/state.db` | `--hermes-db` |
-| Perplexity | `perplexity-pro` CLI or exported JSON/MD | `--perplexity-pro` or `--perplexity-dir` |
-
-Future agents can follow the same pattern: export → Paxel JSONL + `sessions-index.json` → `fix-format.py` → upload.
-
-## Why staging is required
-
-Paxel expects Claude Code-style layout:
-
-```
-$TRANSCRIPT_DIR/
-  -Users-you-projects-myapp/
-    sessions-index.json
-    <session-id>.jsonl
-```
-
-Cursor uses `"role"` at the top level; Paxel requires `"type"`. `fix-format.py` adds the missing field.
-
-**Important:** staging dir must live under `$HOME` (not `/tmp`) so Docker can bind-mount it.
-
-## Configuration
-
-### Cursor path mappings
-
-If Cursor project folder names do not decode to real paths, copy the example:
+## Usage
 
 ```bash
-mkdir -p ~/.config/yc-paxel
-cp config/path-mappings.example.json ~/.config/yc-paxel/path-mappings.json
-# edit cursor_project_folder_to_path entries
+bash scripts/paxel-upload.sh --cursor --all                                  # Cursor agent-transcripts
+bash scripts/paxel-upload.sh --hermes-db --all                               # Hermes ~/.hermes/state.db
+bash scripts/paxel-upload.sh --perplexity-pro --all                          # Perplexity via the perplexity-pro CLI
+bash scripts/paxel-upload.sh --perplexity-dir ~/Downloads/pplx-export --all  # Perplexity from exported JSON/Markdown
+bash scripts/paxel-upload.sh --all-agents --since 30d --all                  # everything, last 30 days, one report
 ```
 
-Or set `PAXEL_PATH_MAPPINGS=/path/to/path-mappings.json`.
+The report link (`results/<id>/v3`) is printed at the end and kept in `~/.paxel/logs/`.
 
-### Hermes fallback path
+## How it works
 
-If a session has no `cwd` or `git_repo_root`, exports fall back to `~/.hermes`. Override with:
+1. **Export.** `export-hermes-sessions.py` reads the `sessions` and `messages` tables
+   (cli, subagent, whatsapp, cron, tui and telegram sources by default) and turns tool calls
+   into `tool_use` and `tool_result` blocks. `export-perplexity-sessions.py` reads Perplexity's
+   GDPR export, role-based `messages[]` or `turns[]` files, or pulls live threads with
+   `perplexity-pro`. Sessions with fewer than four messages are skipped, since Paxel
+   rejects them.
+2. **Stage.** `stage-transcripts.py` decodes each Cursor workspace folder back to a path,
+   or infers one from paths mentioned in the transcript, finds the git root and copies the
+   session under that repo with a `sessions-index.json`.
+3. **Fix.** `fix-format.py` adds the top-level `"type"` Paxel requires to any line that only has `"role"`.
+4. **Upload.** The wrapper starts Colima if Docker isn't running and runs Paxel's
+   `upload.sh` with `TRANSCRIPT_DIR` pointed at the staging folder, which must sit under
+   `$HOME` so Docker can mount it.
 
-```bash
-export HERMES_FALLBACK_PATH=~/projects/my-hermes-repo
-```
+**What leaves your machine:** the upload sends session text, file paths and git metadata to
+Paxel. Source code stays local. Use `--since`, `--no-repo` or a single agent flag to narrow
+it, and never commit `~/.paxel/token`, staged transcripts or your `path-mappings.json`.
 
-### Perplexity offline export
+<details>
+<summary><b>All options</b></summary>
 
-```bash
-# Directory of JSON or Markdown exports
-bash scripts/paxel-upload.sh --perplexity-dir ~/Downloads/perplexity-export --all
-```
+| `paxel-upload.sh` option | |
+|---|---|
+| `--cursor` | Stage Cursor agent-transcripts (the default if no agent flag) |
+| `--hermes-db` | Export Hermes `state.db` sessions |
+| `--hermes-db-sources LIST` | Comma-separated Hermes sources to include |
+| `--perplexity-pro` | Live Perplexity export via `perplexity-pro` |
+| `--perplexity-dir DIR` | Perplexity JSON/Markdown export folder |
+| `--all-agents` | Cursor, Hermes and Perplexity (`perplexity-pro`) together |
+| `--filter REGEX` | Only Cursor sessions whose repo or workspace matches |
+| `--stage-dir DIR` | Staging folder (default `~/.paxel/staged-transcripts`) |
+| `--no-clean` | Keep what is already staged |
+| `--all`, `--since DUR`, `--no-repo`, `-- ...` | Passed through to Paxel |
 
-Supported JSON shapes include Perplexity GDPR export (`conversations[].messages[{query,answer}]`), role-based `messages[]`, and `turns[]` from bulk exporters.
+| Environment | |
+|---|---|
+| `PAXEL_STAGE_DIR` | Default staging folder |
+| `PAXEL_PATH_MAPPINGS` | JSON mapping Cursor workspace folder names to real paths (see `config/path-mappings.example.json`) |
+| `HERMES_FALLBACK_PATH` | Project for Hermes sessions with no `cwd` or git root (default `~/.hermes`) |
 
-## Script reference
+</details>
 
-| Script | Purpose |
-|--------|---------|
-| `scripts/paxel-upload.sh` | End-to-end: export/stage → fix → upload |
-| `scripts/stage-transcripts.py` | Cursor → Paxel layout |
-| `scripts/export-hermes-sessions.py` | Hermes state.db → Paxel JSONL |
-| `scripts/export-perplexity-sessions.py` | Perplexity → Paxel JSONL |
-| `scripts/fix-format.py` | `role` → `type` conversion |
-
-### Paxel passthrough flags
-
-```bash
-bash scripts/paxel-upload.sh --cursor --since 2m --all
-bash scripts/paxel-upload.sh --all-agents --no-repo --all
-```
-
-## Cursor skill install
-
-Symlink into your Cursor skills directory:
-
-```bash
-ln -s "$(pwd)" ~/.cursor/skills/yc-paxel
-```
-
-Or clone directly:
-
-```bash
-git clone https://github.com/parthchandak02/yc-paxel.git ~/.cursor/skills/yc-paxel
-```
-
-## Troubleshooting
+<details>
+<summary><b>Troubleshooting</b></summary>
 
 | Symptom | Fix |
-|---------|-----|
-| Docker daemon isn't running | `colima start` or start Docker Desktop |
-| No sessions found | Run staging/export first; set `TRANSCRIPT_DIR` to staged dir |
-| All sessions "too short" | Re-run `fix-format.py` on staging dir |
-| Colima can't read staging dir | Use `~/.paxel/staged-transcripts`, not `/tmp` |
-| Missing git metadata | Ensure `originalPath` in `sessions-index.json` points to a git repo |
+|---|---|
+| Docker daemon isn't running | `colima start` or open Docker Desktop |
+| No sessions found | Run an export first; check `TRANSCRIPT_DIR` points at the staging folder |
+| All sessions "too short" | Re-run `fix-format.py` on the staging folder |
+| Colima can't read the staging folder | Keep it under `$HOME`, not `/tmp` |
+| Missing git metadata | Make sure `originalPath` in `sessions-index.json` is a git repo |
 
-## Security
+</details>
 
-Upload sends session narratives, file paths, and git metadata to Paxel for analysis. Source code stays local. Use `--since`, `--no-repo`, or per-agent flags to limit scope.
+<details>
+<summary><b>Project layout</b></summary>
 
-Never commit `~/.paxel/token`, staged transcripts, or personal `path-mappings.json`.
+```
+scripts/paxel-upload.sh                 Export, stage, fix and upload in one command
+scripts/stage-transcripts.py            Cursor agent-transcripts -> Paxel layout
+scripts/export-hermes-sessions.py       Hermes state.db -> Paxel JSONL
+scripts/export-perplexity-sessions.py   Perplexity exports or live threads -> Paxel JSONL
+scripts/fix-format.py                   Adds the top-level "type" field
+config/path-mappings.example.json       Template for Cursor folder-name overrides
+SKILL.md                                Instructions when used as a Cursor skill
+```
 
-## License
+</details>
 
-MIT
+<br>
+
+<div align="center">
+<sub>Python standard library and a bash wrapper around Paxel's uploader. Not affiliated with Y Combinator.</sub>
+</div>
