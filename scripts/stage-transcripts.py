@@ -121,6 +121,29 @@ def matches_filter(root: str, cursor_project: str, pattern: re.Pattern[str] | No
     return bool(pattern.search(haystack))
 
 
+def write_index(proj_dir: Path, entries: list[dict]) -> None:
+    """Merge entries into proj_dir/sessions-index.json instead of overwriting it.
+
+    --all-agents stages Hermes, Perplexity and Cursor sessions into the same
+    project dirs one after another; overwriting would drop the earlier sources.
+    Entries whose .jsonl no longer exists are pruned.
+    """
+    path = proj_dir / "sessions-index.json"
+    merged: dict[str, dict] = {}
+    if path.exists():
+        try:
+            old = json.loads(path.read_text()).get("entries", [])
+        except (OSError, ValueError):
+            old = []
+        for e in old:
+            sid = e.get("sessionId")
+            if sid and (proj_dir / f"{sid}.jsonl").exists():
+                merged[sid] = e
+    for e in entries:
+        merged[e["sessionId"]] = e
+    path.write_text(json.dumps({"version": 1, "entries": list(merged.values())}, indent=2))
+
+
 def stage(output: Path, home: Path, filter_re: re.Pattern[str] | None, clean: bool) -> int:
     special = load_special_mappings(home)
     if clean and output.exists():
@@ -172,9 +195,7 @@ def stage(output: Path, home: Path, filter_re: re.Pattern[str] | None, clean: bo
                 shutil.copy2(src, dest)
             entries.append({"sessionId": sid, "originalPath": root})
             total += 1
-        (proj_dir / "sessions-index.json").write_text(
-            json.dumps({"version": 1, "entries": entries}, indent=2)
-        )
+        write_index(proj_dir, entries)
         remote = git_remote(root) if Path(root).exists() else ""
         print(f"  {len(sessions):4d}  {Path(root).name}  {remote or '(no git remote)'}")
 

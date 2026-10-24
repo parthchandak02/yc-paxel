@@ -292,6 +292,29 @@ def export_via_perplexity_pro(output: Path, library: bool, space: str | None) ->
     return written
 
 
+def write_index(proj_dir: Path, entries: list[dict]) -> None:
+    """Merge entries into proj_dir/sessions-index.json instead of overwriting it.
+
+    --all-agents stages Hermes, Perplexity and Cursor sessions into the same
+    project dirs one after another; overwriting would drop the earlier sources.
+    Entries whose .jsonl no longer exists are pruned.
+    """
+    path = proj_dir / "sessions-index.json"
+    merged: dict[str, dict] = {}
+    if path.exists():
+        try:
+            old = json.loads(path.read_text()).get("entries", [])
+        except (OSError, ValueError):
+            old = []
+        for e in old:
+            sid = e.get("sessionId")
+            if sid and (proj_dir / f"{sid}.jsonl").exists():
+                merged[sid] = e
+    for e in entries:
+        merged[e["sessionId"]] = e
+    path.write_text(json.dumps({"version": 1, "entries": list(merged.values())}, indent=2))
+
+
 def export_from_input_dir(
     input_dir: Path,
     output: Path,
@@ -339,14 +362,10 @@ def export_from_input_dir(
 
     for original, items in by_repo.items():
         proj_dir = output / encode_dir(original)
-        index = {
-            "version": 1,
-            "entries": [
-                {"sessionId": safe_id, "originalPath": original, "agentSource": "perplexity"}
-                for safe_id, _ in items
-            ],
-        }
-        (proj_dir / "sessions-index.json").write_text(json.dumps(index, indent=2))
+        write_index(proj_dir, [
+            {"sessionId": safe_id, "originalPath": original, "agentSource": "perplexity"}
+            for safe_id, _ in items
+        ])
 
     print(f"Exported {exported} Perplexity sessions to {output}")
     print(f"Skipped {skipped} threads (too short for Paxel)")

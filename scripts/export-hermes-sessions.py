@@ -174,6 +174,29 @@ def export_session(con: sqlite3.Connection, session_id: str) -> list[dict]:
     return entries
 
 
+def write_index(proj_dir: Path, entries: list[dict]) -> None:
+    """Merge entries into proj_dir/sessions-index.json instead of overwriting it.
+
+    --all-agents stages Hermes, Perplexity and Cursor sessions into the same
+    project dirs one after another; overwriting would drop the earlier sources.
+    Entries whose .jsonl no longer exists are pruned.
+    """
+    path = proj_dir / "sessions-index.json"
+    merged: dict[str, dict] = {}
+    if path.exists():
+        try:
+            old = json.loads(path.read_text()).get("entries", [])
+        except (OSError, ValueError):
+            old = []
+        for e in old:
+            sid = e.get("sessionId")
+            if sid and (proj_dir / f"{sid}.jsonl").exists():
+                merged[sid] = e
+    for e in entries:
+        merged[e["sessionId"]] = e
+    path.write_text(json.dumps({"version": 1, "entries": list(merged.values())}, indent=2))
+
+
 def export(
     db_path: Path,
     output: Path,
@@ -225,14 +248,10 @@ def export(
 
     for original, items in by_repo.items():
         proj_dir = output / encode_dir(original)
-        index = {
-            "version": 1,
-            "entries": [
-                {"sessionId": safe_id, "originalPath": original, "agentSource": source}
-                for safe_id, sid, source in items
-            ],
-        }
-        (proj_dir / "sessions-index.json").write_text(json.dumps(index, indent=2))
+        write_index(proj_dir, [
+            {"sessionId": safe_id, "originalPath": original, "agentSource": source}
+            for safe_id, sid, source in items
+        ])
 
     con.close()
 
